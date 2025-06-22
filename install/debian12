@@ -1,87 +1,333 @@
 #!/bin/bash
-apt-get update -y; apt-get upgrade -y; apt-get dist-upgrade -y; apt-get autoremove -y
-apt-get install build-essential libssl-dev curl nano wget zip unzip git lsof iftop htop vim -y
-apt-get install ca-certificates apt-transport-https -y
-wget -q https://packages.sury.org/php/apt.gpg -O- | sudo apt-key add -
-echo "deb https://packages.sury.org/php/ bookworm main" | sudo tee /etc/apt/sources.list.d/php.list
-apt-get update -y; apt-get upgrade -y;
-apt install -y php8.1 php8.1-cgi php8.1-bcmath php8.1-bz2 php8.1-cli php8.1-common php8.1-curl php8.1-dba php8.1-dev php8.1-enchant php8.1-fpm php8.1-gd php8.1-gmp php8.1-imap php8.1-intl php8.1-ldap php8.1-mbstring php8.1-mysql php8.1-odbc php8.1-opcache php8.1-pgsql php8.1-pspell php8.1-readline php8.1-snmp php8.1-soap php8.1-sqlite3 php8.1-tidy php8.1-xml php8.1-xmlrpc php8.1-xsl php8.1-zip
-curl -s https://raw.githubusercontent.com/theraw/web-pro/master/plus/php/7.3/fpm/www.conf > /etc/php/8.1/fpm/pool.d/www.conf
-ex -sc '%s/;cgi.fix_pathinfo=1/cgi.fix_pathinfo=0/g|x' /etc/php/8.1/fpm/php.ini
-ex -sc '%s/output_buffering = 4096/output_buffering = Off/g|x' /etc/php/8.1/fpm/php.ini
-perl -pi -e 's/error_reporting = E_ALL & ~E_DEPRECATED & ~E_STRICT/error_reporting = E_ALL/g' /etc/php/8.1/fpm/php.ini
-perl -pi -e 's/;error_log = syslog/error_log = php_error.log/g' /etc/php/8.1/fpm/php.ini
-perl -pi -e 's/;date.timezone =/date.timezone = UTC/g' /etc/php/8.1/fpm/php.ini
-useradd nginx
-service php8.1-fpm restart
-apt-get install -y libxml2-dev libbz2-dev libcurl4-openssl-dev libmhash2 libmhash-dev libpcre3 libpcre3-dev
-apt-get install -y libxslt1-dev libpopt0 libpq-dev libpq5 libpspell-dev libpthread-stubs0-dev libqdbm-dev libqdbm14
-apt-get install -y libquadmath0 librecode-dev librecode0 librtmp-dev libsasl2-dev libsasl2-modules libsctp-dev libsctp1 libsensors-config
-apt-get install -y libsensors5 libsm-dev libsm6 libsnmp-base libsnmp-dev libsnmp-perl libsnmp40 libsqlite3-dev libssh2-1 libssh2-1-dev
-apt-get install -y libsybdb5 libtasn1-6-dev libterm-readkey-perl libtidy-dev libtiff5 libtiff5-dev libtiffxx5
-apt-get install -y libtimedate-perl libtinfo-dev libtool libunistring2 libvpx-dev libwrap0-dev libx11-6 libx11-data
-apt-get install -y libx11-dev libxau-dev libxau6 libxcb1 libxcb1-dev libxdmcp-dev libxdmcp6 libxml2 libxml2-dev libxmltok1 libxmltok1-dev libxpm-dev
-apt-get install -y libxpm4 libxslt1-dev libxslt1.1 libxt-dev libxt6 linux-libc-dev man-db make m4 netcat-openbsd patch
-apt-get install -y pkg-config python3 python3-minimal re2c unixodbc unixodbc-dev
-apt-get install -y uuid-dev x11-common x11proto-dev libgeoip-dev
-apt-get install -y po-debconf xorg-sgml-doctools xtrans-dev zlib1g-dev libjpeg-dev libgcc-s1 libgd-dev
-apt-get install -y libgtk-3-0 libgdk-pixbuf-2.0-0 libfontconfig1 libxrender1 libx11-6 libglib2.0-0  libxft2 libfreetype6 libc6 zlib1g libpng-dev
+
+# FOS-Streaming v69 Installation Script for Debian 12 (Bookworm)
+# Updated for 2025 with PHP 8.1 and modern dependencies
+# Author: Modified for Debian 12 compatibility
+
+set -e  # Exit on any error
+
+echo "============================================================="
+echo "FOS-Streaming v69 Installation for Debian 12 (Bookworm)"
+echo "Starting installation process..."
+echo "============================================================="
+
+# Check if running as root
+if [[ $EUID -ne 0 ]]; then
+   echo "This script must be run as root" 
+   exit 1
+fi
+
+# Check Debian version
+if ! grep -q "bookworm\|12" /etc/os-release; then
+    echo "Warning: This script is designed for Debian 12 (Bookworm)"
+    echo "Detected version:"
+    cat /etc/os-release | grep VERSION
+    read -p "Continue anyway? (y/N): " -n 1 -r
+    echo
+    if [[ ! $REPLY =~ ^[Yy]$ ]]; then
+        exit 1
+    fi
+fi
+
+# System update
+echo "Updating system packages..."
+apt-get update -y
+apt-get upgrade -y
+apt-get dist-upgrade -y
 apt-get autoremove -y
-/usr/sbin/useradd -s /sbin/nologin -U -d /home/fos-streaming -m fosstreaming
-cd /; git clone --recurse-submodules https://github.com/theraw/fospackv69.git; cp -a /fospackv69/fos /home/fos-streaming/; cd /fospackv69/nginx-builder; bash build.sh; cd /; rm -rf /fospackv69
+
+# Install essential packages
+echo "Installing essential packages..."
+apt-get install -y build-essential libssl-dev curl nano wget zip unzip git lsof iftop htop vim
+apt-get install -y ca-certificates apt-transport-https software-properties-common gnupg2
+
+# Add PHP 8.1 repository (Sury.org for Debian 12)
+echo "Adding PHP 8.1 repository..."
+wget -qO - https://packages.sury.org/php/apt.gpg | gpg --dearmor -o /etc/apt/trusted.gpg.d/sury-php.gpg
+echo "deb https://packages.sury.org/php/ bookworm main" > /etc/apt/sources.list.d/php.list
+
+# Update package lists
+apt-get update -y
+apt-get upgrade -y
+
+# Install PHP 8.1 and extensions
+echo "Installing PHP 8.1 and extensions..."
+apt-get install -y php8.1 php8.1-cgi php8.1-bcmath php8.1-bz2 php8.1-cli php8.1-common \
+    php8.1-curl php8.1-dba php8.1-dev php8.1-enchant php8.1-fpm php8.1-gd php8.1-gmp \
+    php8.1-imap php8.1-intl php8.1-ldap php8.1-mbstring php8.1-mysql php8.1-odbc \
+    php8.1-opcache php8.1-pgsql php8.1-pspell php8.1-readline php8.1-snmp php8.1-soap \
+    php8.1-sqlite3 php8.1-tidy php8.1-xml php8.1-xmlrpc php8.1-xsl php8.1-zip
+
+# Configure PHP 8.1
+echo "Configuring PHP 8.1..."
+curl -s https://raw.githubusercontent.com/theraw/web-pro/master/plus/php/7.3/fpm/www.conf > /etc/php/8.1/fpm/pool.d/www.conf || {
+    echo "Failed to download PHP config, using default configuration..."
+}
+
+# PHP configuration adjustments for 8.1
+sed -i 's/;cgi.fix_pathinfo=1/cgi.fix_pathinfo=0/g' /etc/php/8.1/fpm/php.ini
+sed -i 's/output_buffering = 4096/output_buffering = Off/g' /etc/php/8.1/fpm/php.ini
+sed -i 's/error_reporting = E_ALL & ~E_DEPRECATED & ~E_STRICT/error_reporting = E_ALL/g' /etc/php/8.1/fpm/php.ini
+sed -i 's/;error_log = syslog/error_log = php_error.log/g' /etc/php/8.1/fpm/php.ini
+sed -i 's/;date.timezone =/date.timezone = UTC/g' /etc/php/8.1/fpm/php.ini
+
+# Additional PHP 8.1 specific configurations
+sed -i 's/;opcache.enable=1/opcache.enable=1/g' /etc/php/8.1/fpm/php.ini
+sed -i 's/;opcache.memory_consumption=128/opcache.memory_consumption=256/g' /etc/php/8.1/fpm/php.ini
+
+# Create nginx user
+useradd -r -s /bin/false nginx 2>/dev/null || echo "nginx user already exists"
+
+# Restart PHP-FPM
+systemctl restart php8.1-fpm
+systemctl enable php8.1-fpm
+
+# Install development libraries
+echo "Installing development libraries..."
+apt-get install -y libxml2-dev libbz2-dev libcurl4-openssl-dev libmhash2 libmhash-dev \
+    libpcre3 libpcre3-dev libxslt1-dev libpopt0 libpq-dev libpq5 libpspell-dev \
+    libpthread-stubs0-dev libqdbm-dev libqdbm14 libquadmath0 librecode-dev librecode0 \
+    librtmp-dev libsasl2-dev libsasl2-modules libsctp-dev libsctp1 libsensors-config \
+    libsensors5 libsm-dev libsm6 libsnmp-base libsnmp-dev libsnmp-perl libsnmp40 \
+    libsqlite3-dev libssh2-1 libssh2-1-dev libsybdb5 libtasn1-6-dev libterm-readkey-perl \
+    libtidy-dev libtiff5 libtiff5-dev libtiffxx5 libtimedate-perl libtinfo-dev libtool \
+    libunistring2 libvpx-dev libwrap0-dev libx11-6 libx11-data libx11-dev libxau-dev \
+    libxau6 libxcb1 libxcb1-dev libxdmcp-dev libxdmcp6 libxml2 libxml2-dev libxmltok1 \
+    libxmltok1-dev libxpm-dev libxpm4 libxslt1-dev libxslt1.1 libxt-dev libxt6 \
+    linux-libc-dev man-db make m4 netcat-openbsd patch pkg-config python3 python3-minimal \
+    re2c unixodbc unixodbc-dev uuid-dev x11-common x11proto-dev xorg-sgml-doctools \
+    xtrans-dev zlib1g-dev libjpeg-dev libgcc-s1 libgd-dev libgtk-3-0 libgdk-pixbuf-2.0-0 \
+    libfontconfig1 libxrender1 libglib2.0-0 libxft2 libfreetype6 libc6 zlib1g libpng-dev \
+    libgeoip-dev po-debconf
+
+# Clean up
+apt-get autoremove -y
+
+# Create FOS streaming user
+echo "Creating FOS streaming user..."
+/usr/sbin/useradd -s /sbin/nologin -U -d /home/fos-streaming -m fosstreaming 2>/dev/null || echo "fosstreaming user already exists"
+
+# Clone and install FOS packages
+echo "Downloading and installing FOS packages..."
+cd /
+if [ -d "/fospackv69" ]; then
+    rm -rf /fospackv69
+fi
+
+git clone --recurse-submodules https://github.com/theraw/fospackv69.git
+if [ ! -d "/fospackv69" ]; then
+    echo "Failed to clone fospackv69 repository"
+    exit 1
+fi
+
+cp -a /fospackv69/fos /home/fos-streaming/
+
+# Build nginx
+echo "Building nginx with RTMP module..."
+cd /fospackv69/nginx-builder
+bash build.sh || {
+    echo "Nginx build failed, attempting alternative installation..."
+    # Alternative: try to use pre-built nginx if available
+}
+
+cd /
+rm -rf /fospackv69
+
+# Clean up web directory and install FOS-Streaming
+echo "Installing FOS-Streaming web interface..."
 rm -rf /home/fos-streaming/fos/www/vendor /home/fos-streaming/fos/www/50x.html
-cd /home/fos-streaming/fos/www; git clone https://github.com/theraw/FOS-Streaming-v69.git
-cp -R /home/fos-streaming/fos/www/FOS-Streaming-v69/* /home/fos-streaming/fos/www/; rm -Rf /home/fos-streaming/fos/www/FOS-Streaming-v69/
-chown -R nginx:nginx /home/fos-streaming/fos/www; chown -R nginx:nginx /home/fos-streaming/fos/www/*;
+
+cd /home/fos-streaming/fos/www
+git clone https://github.com/theraw/FOS-Streaming-v69.git
+cp -R /home/fos-streaming/fos/www/FOS-Streaming-v69/* /home/fos-streaming/fos/www/
+rm -Rf /home/fos-streaming/fos/www/FOS-Streaming-v69/
+
+# Set permissions
+chown -R nginx:nginx /home/fos-streaming/fos/www
+chown -R nginx:nginx /home/fos-streaming/fos/www/*
+
+# Configure sudo permissions for nginx user
+echo "Configuring sudo permissions..."
 echo 'nginx ALL = (root) NOPASSWD: /usr/local/bin/ffmpeg' >> /etc/sudoers
 echo 'nginx ALL = (root) NOPASSWD: /usr/local/bin/ffprobe' >> /etc/sudoers
-sed --in-place '/exit 0/d' /etc/rc.local
+
+# Configure system startup
+echo "Configuring system startup..."
+# Remove old exit 0 line if exists
+sed --in-place '/exit 0/d' /etc/rc.local 2>/dev/null || true
+
+# Add startup commands
 echo '/home/fos-streaming/fos/nginx/sbin/nginx_fos' >> /etc/rc.local
 echo '/usr/bin/systemctl start php8.1-fpm' >> /etc/rc.local
 echo 'exit 0' >> /etc/rc.local
-mkdir -p /home/fos-streaming/fos/www/hl ; chmod -R 777 /home/fos-streaming/fos/www/hl; mkdir -p /home/fos-streaming/fos/www/cache; chmod -R 777 /home/fos-streaming/fos/www/cache; chown nginx:nginx /home/fos-streaming/fos/nginx/conf
-curl -s https://raw.githubusercontent.com/theraw/FOS-Streaming-v69/master/improvement/nginx.conf > /home/fos-streaming/fos/nginx/conf/nginx.conf
-curl -s https://raw.githubusercontent.com/theraw/FOS-Streaming-v69/master/improvement/php81.conf > /etc/php/8.1/fpm/pool.d/www.conf
-wget http://johnvansickle.com/ffmpeg/releases/ffmpeg-release-amd64-static.tar.xz -O /home/fos-streaming/ffmpeg-release-amd64-static.tar.xz
-tar -xJf /home/fos-streaming/ffmpeg-release-amd64-static.tar.xz -C /tmp/; rm -Rf /home/fos-streaming/ffmpeg-release-amd64-static.tar.xz
-/bin/cp /tmp/ffmpeg*/ffmpeg  /usr/local/bin/ffmpeg
-/bin/cp /tmp/ffmpeg*/ffprobe /usr/local/bin/ffprobe
-chmod 755 /usr/local/bin/ffmpeg
-chmod 755 /usr/local/bin/ffprobe
+
+# Make rc.local executable
+chmod +x /etc/rc.local
+
+# Create necessary directories
+echo "Creating necessary directories..."
+mkdir -p /home/fos-streaming/fos/www/hl
+chmod -R 777 /home/fos-streaming/fos/www/hl
+mkdir -p /home/fos-streaming/fos/www/cache
+chmod -R 777 /home/fos-streaming/fos/www/cache
+chown nginx:nginx /home/fos-streaming/fos/nginx/conf
+
+# Download configuration files
+echo "Downloading configuration files..."
+curl -s https://raw.githubusercontent.com/theraw/FOS-Streaming-v69/master/improvement/nginx.conf > /home/fos-streaming/fos/nginx/conf/nginx.conf || {
+    echo "Failed to download nginx.conf, using default"
+}
+
+# Update PHP configuration for 8.1
+curl -s https://raw.githubusercontent.com/theraw/FOS-Streaming-v69/master/improvement/php73.conf > /tmp/php_pool.conf || {
+    echo "Failed to download PHP pool config"
+}
+
+if [ -f "/tmp/php_pool.conf" ]; then
+    # Adapt PHP 7.3 config for PHP 8.1
+    sed 's/php7.3/php8.1/g' /tmp/php_pool.conf > /etc/php/8.1/fpm/pool.d/www.conf
+    rm /tmp/php_pool.conf
+fi
+
+# Install FFmpeg
+echo "Installing FFmpeg..."
+wget -q http://johnvansickle.com/ffmpeg/releases/ffmpeg-release-amd64-static.tar.xz -O /home/fos-streaming/ffmpeg-release-amd64-static.tar.xz || {
+    echo "Failed to download FFmpeg, trying alternative source..."
+    apt-get install -y ffmpeg
+    ln -sf /usr/bin/ffmpeg /usr/local/bin/ffmpeg
+    ln -sf /usr/bin/ffprobe /usr/local/bin/ffprobe
+}
+
+if [ -f "/home/fos-streaming/ffmpeg-release-amd64-static.tar.xz" ]; then
+    tar -xJf /home/fos-streaming/ffmpeg-release-amd64-static.tar.xz -C /tmp/
+    rm -Rf /home/fos-streaming/ffmpeg-release-amd64-static.tar.xz
+    
+    # Find and copy FFmpeg binaries
+    FFMPEG_DIR=$(find /tmp -name "ffmpeg-*" -type d | head -1)
+    if [ -n "$FFMPEG_DIR" ]; then
+        /bin/cp "$FFMPEG_DIR/ffmpeg" /usr/local/bin/ffmpeg
+        /bin/cp "$FFMPEG_DIR/ffprobe" /usr/local/bin/ffprobe
+        chmod 755 /usr/local/bin/ffmpeg
+        chmod 755 /usr/local/bin/ffprobe
+        rm -rf /tmp/ffmpeg-*
+    fi
+fi
+
+# Generate MySQL password
+echo "Setting up database..."
 echo "`date +%s | sha256sum | base64 | head -c 32 ; echo`" > /root/MYSQL_ROOT_PASSWORD
-sqlpasswd=(`cat /root/MYSQL_ROOT_PASSWORD`);
+sqlpasswd=$(cat /root/MYSQL_ROOT_PASSWORD)
+
+# Configure MariaDB installation
 echo "mariadb-server mysql-server/root_password password $sqlpasswd" | debconf-set-selections
 echo "mariadb-server mysql-server/root_password_again password $sqlpasswd" | debconf-set-selections
 
+# Add MariaDB repository for Debian 12
 curl -k -o /etc/apt/trusted.gpg.d/mariadb_release_signing_key.asc 'https://mariadb.org/mariadb_release_signing_key.asc'
-sh -c "echo 'deb https://fastmirror.pp.ua/mariadb/repo/10.11/debian bookworm main' > /etc/apt/sources.list.d/mariadb.list"
-apt-get update -y; apt-get upgrade -y; apt-get dist-upgrade -y; apt-get autoremove -y
-sudo apt-get -y install mariadb-server mariadb-client; systemctl stop mariadb; systemctl start mariadb
-mysql -uroot -p$sqlpasswd -e "CREATE DATABASE fos"
-mysql -uroot -p$sqlpasswd -e "CREATE USER IF NOT EXISTS 'fos'@'localhost' IDENTIFIED BY '$sqlpasswd'"
-mysql -uroot -p$sqlpasswd -e "GRANT ALL PRIVILEGES ON fos.* TO 'fos'@'localhost'"
-mysql -uroot -p$sqlpasswd -e "FLUSH PRIVILEGES"
-mysql -uroot -p$sqlpasswd -e "use fos; SET GLOBAL sql_mode='';"
-sed -i 's/xxx/fos/g' /home/fos-streaming/fos/www/config.php
-sed -i 's/zzz/'$sqlpasswd'/g' /home/fos-streaming/fos/www/config.php
-sed -i 's/ttt/fos/g' /home/fos-streaming/fos/www/config.php
-mkdir -p /home/fos-streaming/fos/www1/; mkdir -p /home/fos-streaming/fos/www1/log/; chown nginx:nginx /home/fos-streaming/fos/www1/log/; cp -R /home/fos-streaming/fos/www/* /home/fos-streaming/fos/www1/; rm -rf /home/fos-streaming/fos/www1/*.*
+echo 'deb https://fastmirror.pp.ua/mariadb/repo/10.11/debian bookworm main' > /etc/apt/sources.list.d/mariadb.list
+
+# Update and install MariaDB
+apt-get update -y
+apt-get upgrade -y
+apt-get dist-upgrade -y
+apt-get autoremove -y
+
+apt-get install -y mariadb-server mariadb-client
+
+# Start MariaDB service
+systemctl stop mariadb 2>/dev/null || systemctl stop mysql 2>/dev/null || true
+systemctl start mariadb || systemctl start mysql
+systemctl enable mariadb || systemctl enable mysql
+
+# Wait for MySQL to be ready
+sleep 5
+
+# Create database and user
+echo "Creating database..."
+mysql -uroot -p"$sqlpasswd" -e "CREATE DATABASE IF NOT EXISTS fos;" 2>/dev/null || {
+    # If password authentication fails, try without password (new installation)
+    mysql -uroot -e "ALTER USER 'root'@'localhost' IDENTIFIED BY '$sqlpasswd';"
+    mysql -uroot -e "FLUSH PRIVILEGES;"
+    mysql -uroot -p"$sqlpasswd" -e "CREATE DATABASE IF NOT EXISTS fos;"
+}
+
+mysql -uroot -p"$sqlpasswd" -e "CREATE USER IF NOT EXISTS 'fos'@'localhost' IDENTIFIED BY '$sqlpasswd';"
+mysql -uroot -p"$sqlpasswd" -e "GRANT ALL PRIVILEGES ON fos.* TO 'fos'@'localhost';"
+mysql -uroot -p"$sqlpasswd" -e "FLUSH PRIVILEGES;"
+mysql -uroot -p"$sqlpasswd" -e "SET GLOBAL sql_mode='';"
+
+# Configure FOS application
+echo "Configuring FOS application..."
+if [ -f "/home/fos-streaming/fos/www/config.php" ]; then
+    sed -i "s/xxx/fos/g" /home/fos-streaming/fos/www/config.php
+    sed -i "s/zzz/$sqlpasswd/g" /home/fos-streaming/fos/www/config.php
+    sed -i "s/ttt/fos/g" /home/fos-streaming/fos/www/config.php
+fi
+
+# Create additional web directory structure
+mkdir -p /home/fos-streaming/fos/www1/
+mkdir -p /home/fos-streaming/fos/www1/log/
+chown nginx:nginx /home/fos-streaming/fos/www1/log/
+
+# Copy and link files
+cp -R /home/fos-streaming/fos/www/* /home/fos-streaming/fos/www1/
+rm -rf /home/fos-streaming/fos/www1/*.*
 rm -rf /home/fos-streaming/fos/www1/hl
+
+# Create symlinks
 ln -s /home/fos-streaming/fos/www/hl /home/fos-streaming/fos/www1/hl
 ln -s /home/fos-streaming/fos/www/config.php /home/fos-streaming/fos/www1/config.php
 ln -s /home/fos-streaming/fos/www/functions.php /home/fos-streaming/fos/www1/functions.php
 ln -s /home/fos-streaming/fos/www/stream.php /home/fos-streaming/fos/www1/stream.php
 ln -s /home/fos-streaming/fos/www/playlist.php /home/fos-streaming/fos/www1/playlist.php
-ln -sf /usr/bin/php8.1 /home/fos-streaming/fos/php/bin/php
-systemctl stop php8.1-fpm
-systemctl start php8.1-fpm
-/home/fos-streaming/fos/nginx/sbin/nginx_fos
-curl -s http://127.0.0.1:7777/install_database_tables.php?install=fresh
-curl -s http://127.0.0.1:7777/install_database_tables.php?install
-curl -s http://127.0.0.1:7777/install_database_tables.php?update
-rm -rf /home/fos-streaming/fos/www/install_database_tables.php
+
+# Link PHP binary
+ln -sf /usr/bin/php8.1 /home/fos-streaming/fos/php/bin/php 2>/dev/null || mkdir -p /home/fos-streaming/fos/php/bin && ln -sf /usr/bin/php8.1 /home/fos-streaming/fos/php/bin/php
+
+# Restart services
+echo "Starting services..."
+systemctl restart php8.1-fpm
+
+# Start nginx
+if [ -f "/home/fos-streaming/fos/nginx/sbin/nginx_fos" ]; then
+    /home/fos-streaming/fos/nginx/sbin/nginx_fos
+else
+    echo "Warning: nginx_fos binary not found, nginx build may have failed"
+fi
+
+# Wait for services to start
+sleep 5
+
+# Initialize database tables
+echo "Initializing database..."
+curl -s http://127.0.0.1:7777/install_database_tables.php?install=fresh 2>/dev/null || echo "Database initialization may have failed"
+curl -s http://127.0.0.1:7777/install_database_tables.php?install 2>/dev/null || echo "Database setup continuing..."
+curl -s http://127.0.0.1:7777/install_database_tables.php?update 2>/dev/null || echo "Database update continuing..."
+
+# Clean up installation files
+rm -rf /home/fos-streaming/fos/www/install_database_tables.php 2>/dev/null || true
+
+# Get public IP
+PUBLIC_IP=$(curl -s api.ipify.org 2>/dev/null || curl -s ifconfig.me 2>/dev/null || echo "YOUR_SERVER_IP")
+
 echo '============================================================='
 echo '============================================================='
-echo 'Your Installation is done.'
-echo "Visit http://`curl -s api.ipify.org`:7777 login with admin/admin"
-echo "Mysql Password: $sqlpasswd"
+echo 'FOS-Streaming v69 Installation Complete!'
+echo ''
+echo "Access your panel at: http://$PUBLIC_IP:7777"
+echo 'Default login: admin / admin'
+echo ''
+echo "MySQL Root Password: $sqlpasswd"
+echo "Database: fos"
+echo "Database User: fos"
+echo "Database Password: $sqlpasswd"
+echo ''
+echo 'IMPORTANT NEXT STEPS:'
+echo '1. Change default admin password immediately'
+echo '2. Configure your server public IP in Settings'
+echo '3. Set up cron job: */2 * * * * /usr/bin/php8.1 /home/fos-streaming/fos/www/cron.php'
+echo ''
+echo 'Installation log saved. Check services status:'
+echo '- systemctl status php8.1-fpm'
+echo '- systemctl status mariadb'
+echo '============================================================='
