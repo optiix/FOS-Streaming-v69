@@ -2,6 +2,7 @@
 
 # FOS-Streaming v69 SECURE Installation Script for Raspberry Pi OS (64-bit)
 # Updated for 2025 with PHP 8.1, security hardening and ARM64 optimizations
+# Optimized for Raspberry Pi 4B+ and Pi 5 with 4-8GB RAM
 # Uses optiix/FOS-Streaming-v69 repository with integrated security improvements
 
 set -e  # Exit on any error
@@ -17,7 +18,7 @@ NC='\033[0m' # No Color
 
 echo -e "${BLUE}============================================================="
 echo "🍓 FOS-Streaming v69 SECURE Installation for Raspberry Pi OS"
-echo "Optimized for Pi 4B+, Pi 5 with ARM64 and security improvements"
+echo "Optimized for Pi 4B+ (4-8GB RAM), Pi 5 with ARM64 and security"
 echo "=============================================================${NC}"
 
 echo -e "${MAGENTA}🍓 RASPBERRY PI SPECIFIC CONFIGURATION${NC}"
@@ -26,16 +27,17 @@ echo ""
 echo -e "${YELLOW}BEFORE installation starts, check your Pi setup:${NC}"
 echo ""
 echo -e "${GREEN}1. RASPBERRY PI REQUIREMENTS:${NC}"
-echo -e "   • Pi 4B+ (4GB+ RAM) or Pi 5 (4GB+ RAM)"
+echo -e "   • Pi 4B+ (4-8GB RAM) or Pi 5 (4-8GB RAM)"
 echo -e "   • Raspberry Pi OS 64-bit (Bookworm)"
 echo -e "   • At least 32GB microSD (Class 10+) or USB 3.0 SSD"
 echo -e "   • Ethernet connection (strongly recommended for streaming)"
 echo ""
-echo -e "${GREEN}2. PERFORMANCE OPTIMIZATIONS:${NC}"
+echo -e "${GREEN}2. PERFORMANCE OPTIMIZATIONS FOR 4-8GB RAM:${NC}"
 echo -e "   • GPU memory will be increased to 128MB"
-echo -e "   • CPU limits adapted for ARM64"
-echo -e "   • Memory usage optimized for Pi"
+echo -e "   • CPU limits adapted for ARM64 with higher capacity"
+echo -e "   • Memory usage optimized for 4-8GB Pi models"
 echo -e "   • FFmpeg with ARM64 support"
+echo -e "   • Up to 5 concurrent streams supported"
 echo ""
 echo -e "${GREEN}3. NETWORK SETTINGS:${NC}"
 echo -e "   • Default SSH port 22 (change UFW rules if using different port)"
@@ -52,15 +54,15 @@ echo ""
 echo -e "${YELLOW}Pi-specific installation will:${NC}"
 echo "• Install ARM64-optimized FFmpeg"
 echo "• Configure GPU memory for better performance"
-echo "• Optimize PHP for ARM64 architecture"
+echo "• Optimize PHP for ARM64 architecture with 4-8GB RAM support"
 echo "• Implement Pi-specific security settings"
 echo "• Configure storage for microSD/SSD performance"
-echo "• Adapt system resources for Pi hardware"
+echo "• Adapt system resources for 4-8GB Pi hardware"
 echo ""
 echo -e "${CYAN}=============================================================${NC}"
 
 # User confirmation
-read -p "Are you ready to install FOS-Streaming on your Raspberry Pi? (y/N): " -n 1 -r
+read -p "Are you ready to install FOS-Streaming on your 4-8GB Raspberry Pi? (y/N): " -n 1 -r
 echo ""
 if [[ ! $REPLY =~ ^[Yy]$ ]]; then
     echo -e "${YELLOW}Installation cancelled.${NC}"
@@ -68,7 +70,7 @@ if [[ ! $REPLY =~ ^[Yy]$ ]]; then
 fi
 
 echo ""
-echo -e "${GREEN}🍓 Starting Raspberry Pi installation...${NC}"
+echo -e "${GREEN}🍓 Starting Raspberry Pi installation for 4-8GB models...${NC}"
 sleep 2
 
 # Repository settings
@@ -136,9 +138,12 @@ echo "Pi Model: $PI_MODEL"
 echo "Total RAM: ${TOTAL_RAM}GB"
 
 if [ "$TOTAL_RAM" -lt 4 ]; then
-    warn "You have less than 4GB RAM. Performance may be limited for streaming."
-    warn "Recommendation: Use Pi with at least 4GB RAM for best performance."
+    error "This script requires at least 4GB RAM."
+    error "You have ${TOTAL_RAM}GB RAM. Use the standard installation for lower RAM Pi models."
+    exit 1
 fi
+
+success "Pi has ${TOTAL_RAM}GB RAM - perfect for optimized streaming!"
 
 # Generate secure passwords and keys
 log "Generating secure passwords and encryption keys..."
@@ -157,7 +162,7 @@ chmod 600 /root/.fos-streaming/*
 success "Secure keys generated and saved"
 
 # Raspberry Pi optimizations
-log "Configuring Raspberry Pi optimizations..."
+log "Configuring Raspberry Pi optimizations for 4-8GB models..."
 
 # GPU memory for better performance
 BOOT_CONFIG="/boot/firmware/config.txt"
@@ -177,7 +182,12 @@ if [ -f "$BOOT_CONFIG" ]; then
         echo "dtoverlay=vc4-kms-v3d" >> "$BOOT_CONFIG"
     fi
     
-    success "Pi hardware optimizations configured"
+    # Optimize for higher RAM models
+    if ! grep -q "arm_64bit=1" "$BOOT_CONFIG"; then
+        echo "arm_64bit=1" >> "$BOOT_CONFIG"
+    fi
+    
+    success "Pi hardware optimizations configured for 4-8GB RAM"
 else
     warn "Could not find Pi config file, skipping hardware optimizations"
 fi
@@ -282,8 +292,8 @@ success "PHP 8.1 installed with all extensions"
 log "Creating nginx system user..."
 useradd -r -s /bin/false nginx 2>/dev/null || log "nginx user already exists"
 
-# Secure PHP 8.1 configuration (Pi-optimized)
-log "Configuring PHP 8.1 with secure Pi-optimized settings..."
+# Secure PHP 8.1 configuration (Pi-optimized for 4-8GB RAM)
+log "Configuring PHP 8.1 with secure Pi-optimized settings for 4-8GB RAM..."
 cat > /etc/php/8.1/fpm/pool.d/www.conf << 'EOF'
 [www]
 user = nginx
@@ -293,13 +303,13 @@ listen.owner = nginx
 listen.group = nginx
 listen.mode = 0660
 
-; Pi-optimized process management
+; Pi-optimized process management for 4-8GB RAM
 pm = dynamic
-pm.max_children = 25
-pm.start_servers = 3
-pm.min_spare_servers = 2
-pm.max_spare_servers = 8
-pm.max_requests = 200
+pm.max_children = 40
+pm.start_servers = 5
+pm.min_spare_servers = 5
+pm.max_spare_servers = 15
+pm.max_requests = 300
 
 ; Security settings - Important functions allowed for FOS-Streaming
 php_admin_value[disable_functions] = show_source,highlight_file,ini_alter,ini_restore,dl,openlog,syslog,readlink,symlink,popepassthru,stream_socket_server,fsocket
@@ -316,12 +326,12 @@ php_value[display_errors] = Off
 php_value[log_errors] = On
 php_value[error_log] = /var/log/fos-streaming/php-error.log
 
-; Pi-optimized limits
-php_value[upload_max_filesize] = 25M
-php_value[post_max_size] = 25M
-php_value[max_execution_time] = 120
-php_value[max_input_time] = 60
-php_value[memory_limit] = 256M
+; Pi-optimized limits for 4-8GB RAM
+php_value[upload_max_filesize] = 50M
+php_value[post_max_size] = 50M
+php_value[max_execution_time] = 180
+php_value[max_input_time] = 90
+php_value[memory_limit] = 512M
 EOF
 
 # PHP.ini security hardening
@@ -331,13 +341,13 @@ sed -i 's/output_buffering = 4096/output_buffering = Off/g' /etc/php/8.1/fpm/php
 sed -i 's/expose_php = On/expose_php = Off/g' /etc/php/8.1/fpm/php.ini
 sed -i 's/;date.timezone =/date.timezone = UTC/g' /etc/php/8.1/fpm/php.ini
 sed -i 's/;opcache.enable=1/opcache.enable=1/g' /etc/php/8.1/fpm/php.ini
-sed -i 's/;opcache.memory_consumption=128/opcache.memory_consumption=128/g' /etc/php/8.1/fpm/php.ini
+sed -i 's/;opcache.memory_consumption=128/opcache.memory_consumption=256/g' /etc/php/8.1/fpm/php.ini
 
 # Restart PHP-FPM
 systemctl restart php8.1-fpm
 systemctl enable php8.1-fpm
 
-success "PHP 8.1 configured and activated"
+success "PHP 8.1 configured and activated for 4-8GB Pi"
 
 # Install development libraries (minimal set for Pi)
 log "Installing essential development libraries..."
@@ -414,7 +424,7 @@ fi
 # Create secure .env file with generated passwords
 log "Creating secure .env configuration file..."
 cat > /home/fos-streaming/fos/www/.env << EOF
-# FOS-Streaming Secure Configuration for Raspberry Pi
+# FOS-Streaming Secure Configuration for Raspberry Pi 4-8GB
 # Generated automatically by installation script
 APP_ENV=production
 APP_DEBUG=false
@@ -435,7 +445,7 @@ FFPROBE_PATH=/usr/bin/ffprobe
 HLS_FOLDER=hl
 USER_AGENT=FOS-Streaming-Pi/2.0
 
-# Pi-optimized security settings
+# Pi-optimized security settings for 4-8GB RAM
 SESSION_LIFETIME=1800
 MAX_LOGIN_ATTEMPTS=5
 LOCKOUT_TIME=900
@@ -455,15 +465,17 @@ MAIL_ENCRYPTION=tls
 MAIL_FROM_ADDRESS=noreply@localhost
 MAIL_FROM_NAME="FOS Streaming Pi System"
 
-# Pi Performance settings
+# Pi Performance settings for 4-8GB RAM
 PI_OPTIMIZATION=true
-MAX_CONCURRENT_STREAMS=3
-MEMORY_LIMIT=256M
+MAX_CONCURRENT_STREAMS=5
+MEMORY_LIMIT=512M
+PHP_MEMORY_LIMIT=512M
+CPU_CORES=4
 EOF
 
 chmod 600 /home/fos-streaming/fos/www/.env
 
-success "Secure .env file created with all configurations"
+success "Secure .env file created with 4-8GB RAM optimizations"
 
 # Set correct ownership and permissions
 log "Setting secure file permissions..."
@@ -541,11 +553,11 @@ mysql -uroot -p"$MYSQL_ROOT_PASSWORD" -e "FLUSH PRIVILEGES;"
 
 success "MariaDB installed and configured"
 
-# Create systemd service for FOS cron (Pi-optimized)
-log "Creating secure Pi-optimized systemd cron service..."
+# Create systemd service for FOS cron (Pi-optimized for 4-8GB RAM)
+log "Creating secure Pi-optimized systemd cron service for 4-8GB RAM..."
 cat > /etc/systemd/system/fos-streaming-monitor.service << 'EOF'
 [Unit]
-Description=FOS Streaming Monitor Service for Raspberry Pi
+Description=FOS Streaming Monitor Service for Raspberry Pi 4-8GB
 After=network.target mariadb.service
 
 [Service]
@@ -570,10 +582,10 @@ ProtectControlGroups=true
 RestrictRealtime=true
 SystemCallFilter=@system-service
 
-# Pi resource limits
-MemoryLimit=256M
-CPUQuota=30%
-TasksMax=25
+# Pi resource limits for 4-8GB RAM
+MemoryLimit=512M
+CPUQuota=50%
+TasksMax=50
 EOF
 
 cat > /etc/systemd/system/fos-streaming-monitor.timer << 'EOF'
@@ -662,9 +674,10 @@ echo -e "   🔐 Change password IMMEDIATELY after first login!"
 echo ""
 echo -e "${CYAN}🍓 RASPBERRY PI STATUS:${NC}"
 echo -e "   📊 Model: $PI_MODEL"
-echo -e "   💾 RAM: ${TOTAL_RAM}GB"
+echo -e "   💾 RAM: ${TOTAL_RAM}GB (4-8GB optimized)"
 echo -e "   🔧 GPU Memory: 128MB (optimized)"
 echo -e "   📱 Architecture: ARM64"
+echo -e "   ⚡ Performance Mode: 4-8GB RAM optimized"
 echo ""
 echo -e "${CYAN}🔒 SECURITY INFORMATION:${NC}"
 echo -e "   🛡️  Firewall (UFW): Active"
@@ -675,21 +688,4 @@ echo ""
 echo -e "${CYAN}💾 DATABASE INFORMATION:${NC}"
 echo -e "   🗄️  Database: fos"
 echo -e "   👤 User: fos"
-echo -e "   🔑 Root Password: ${YELLOW}cat /root/.fos-streaming/mysql_root_password${NC}"
-echo -e "   🔑 FOS Password: ${YELLOW}cat /root/.fos-streaming/mysql_fos_password${NC}"
-echo ""
-echo -e "${CYAN}⚡ PERFORMANCE NOTES:${NC}"
-echo -e "   🎯 Max recommended concurrent streams: 3"
-echo -e "   💾 HLS files use fast storage (/tmp)"
-echo -e "   🔧 PHP memory limit: 256MB"
-echo -e "   ⏱️  Monitoring: Every 2 minutes"
-echo ""
-echo -e "${CYAN}🔧 POST-INSTALLATION STEPS:${NC}"
-echo "1. Login and change default password immediately"
-echo "2. Configure your public IP in settings"
-echo "3. Test streaming with a simple source"
-echo "4. Monitor Pi temperature during heavy use: vcgencmd measure_temp"
-echo ""
-echo -e "${GREEN}🍓 Your Raspberry Pi is ready for secure IPTV streaming! 🍓${NC}"
-echo -e "${YELLOW}Reboot recommended to ensure all optimizations are active.${NC}"
-echo "============================================================="
+echo -e "   🔑
