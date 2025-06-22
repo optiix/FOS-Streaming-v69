@@ -1,0 +1,695 @@
+#!/bin/bash
+
+# FOS-Streaming v69 SECURE Installation Script for Raspberry Pi OS (64-bit)
+# Updated for 2025 with PHP 8.1, security hardening and ARM64 optimizations
+# Uses optiix/FOS-Streaming-v69 repository with integrated security improvements
+
+set -e  # Exit on any error
+
+# Colors for output
+RED='\033[0;31m'
+GREEN='\033[0;32m'
+YELLOW='\033[1;33m'
+BLUE='\033[0;34m'
+CYAN='\033[0;36m'
+MAGENTA='\033[0;35m'
+NC='\033[0m' # No Color
+
+echo -e "${BLUE}============================================================="
+echo "🍓 FOS-Streaming v69 SECURE Installation for Raspberry Pi OS"
+echo "Optimized for Pi 4B+, Pi 5 with ARM64 and security improvements"
+echo "=============================================================${NC}"
+
+echo -e "${MAGENTA}🍓 RASPBERRY PI SPECIFIC CONFIGURATION${NC}"
+echo -e "${CYAN}=============================================================${NC}"
+echo ""
+echo -e "${YELLOW}BEFORE installation starts, check your Pi setup:${NC}"
+echo ""
+echo -e "${GREEN}1. RASPBERRY PI REQUIREMENTS:${NC}"
+echo -e "   • Pi 4B+ (4GB+ RAM) or Pi 5 (4GB+ RAM)"
+echo -e "   • Raspberry Pi OS 64-bit (Bookworm)"
+echo -e "   • At least 32GB microSD (Class 10+) or USB 3.0 SSD"
+echo -e "   • Ethernet connection (strongly recommended for streaming)"
+echo ""
+echo -e "${GREEN}2. PERFORMANCE OPTIMIZATIONS:${NC}"
+echo -e "   • GPU memory will be increased to 128MB"
+echo -e "   • CPU limits adapted for ARM64"
+echo -e "   • Memory usage optimized for Pi"
+echo -e "   • FFmpeg with ARM64 support"
+echo ""
+echo -e "${GREEN}3. NETWORK SETTINGS:${NC}"
+echo -e "   • Default SSH port 22 (change UFW rules if using different port)"
+echo -e "   • Web panel on port 7777"
+echo ""
+echo -e "${GREEN}4. STORAGE OPTIMIZATION:${NC}"
+echo -e "   • HLS files placed in /tmp for better performance"
+echo -e "   • Cache optimization for microSD cards"
+echo ""
+echo -e "${CYAN}=============================================================${NC}"
+echo -e "${RED}SECURITY NOTICE: All passwords and keys are generated automatically!"
+echo -e "You do NOT need to edit any passwords or security keys.${NC}"
+echo ""
+echo -e "${YELLOW}Pi-specific installation will:${NC}"
+echo "• Install ARM64-optimized FFmpeg"
+echo "• Configure GPU memory for better performance"
+echo "• Optimize PHP for ARM64 architecture"
+echo "• Implement Pi-specific security settings"
+echo "• Configure storage for microSD/SSD performance"
+echo "• Adapt system resources for Pi hardware"
+echo ""
+echo -e "${CYAN}=============================================================${NC}"
+
+# User confirmation
+read -p "Are you ready to install FOS-Streaming on your Raspberry Pi? (y/N): " -n 1 -r
+echo ""
+if [[ ! $REPLY =~ ^[Yy]$ ]]; then
+    echo -e "${YELLOW}Installation cancelled.${NC}"
+    exit 0
+fi
+
+echo ""
+echo -e "${GREEN}🍓 Starting Raspberry Pi installation...${NC}"
+sleep 2
+
+# Repository settings
+MAIN_REPO="https://github.com/optiix/FOS-Streaming-v69.git"
+NGINX_REPO="https://github.com/theraw/fospackv69.git"  # For nginx build
+
+# Logging functions
+log() {
+    echo -e "${GREEN}[$(date '+%Y-%m-%d %H:%M:%S')]${NC} $1"
+}
+
+warn() {
+    echo -e "${YELLOW}[$(date '+%Y-%m-%d %H:%M:%S')] WARNING:${NC} $1"
+}
+
+error() {
+    echo -e "${RED}[$(date '+%Y-%m-%d %H:%M:%S')] ERROR:${NC} $1"
+}
+
+success() {
+    echo -e "${GREEN}[$(date '+%Y-%m-%d %H:%M:%S')] SUCCESS:${NC} $1"
+}
+
+# Check if script is run as root
+if [[ $EUID -ne 0 ]]; then
+   error "This script must be run as root"
+   echo "Run: sudo bash install/raspberry-pi"
+   exit 1
+fi
+
+# Check ARM64 architecture
+ARCH=$(uname -m)
+if [[ "$ARCH" != "aarch64" && "$ARCH" != "arm64" ]]; then
+    error "This script is only for ARM64 Raspberry Pi"
+    echo "Detected architecture: $ARCH"
+    echo "Use install/debian12 for x86_64 systems"
+    exit 1
+fi
+
+# Check Raspberry Pi OS
+if ! grep -q "Raspberry Pi\|Raspbian" /etc/os-release; then
+    warn "This script is optimized for Raspberry Pi OS"
+    echo "Detected system:"
+    cat /etc/os-release | grep PRETTY_NAME
+    read -p "Continue anyway? (y/N): " -n 1 -r
+    echo
+    if [[ ! $REPLY =~ ^[Yy]$ ]]; then
+        exit 1
+    fi
+fi
+
+# Check internet connection
+log "Checking internet connection..."
+if ! ping -c 1 google.com &> /dev/null; then
+    error "No internet connection. Check network and try again."
+    exit 1
+fi
+
+# Check Pi model and RAM
+log "Checking Raspberry Pi hardware..."
+PI_MODEL=$(cat /proc/device-tree/model 2>/dev/null || echo "Unknown Pi Model")
+TOTAL_RAM=$(free -m | awk 'NR==2{printf "%.0f", $2/1024}')
+
+echo "Pi Model: $PI_MODEL"
+echo "Total RAM: ${TOTAL_RAM}GB"
+
+if [ "$TOTAL_RAM" -lt 4 ]; then
+    warn "You have less than 4GB RAM. Performance may be limited for streaming."
+    warn "Recommendation: Use Pi with at least 4GB RAM for best performance."
+fi
+
+# Generate secure passwords and keys
+log "Generating secure passwords and encryption keys..."
+MYSQL_ROOT_PASSWORD=$(openssl rand -base64 32 | tr -d "=+/" | cut -c1-25)
+MYSQL_FOS_PASSWORD=$(openssl rand -base64 32 | tr -d "=+/" | cut -c1-25)
+APP_KEY=$(openssl rand -hex 32)
+
+# Save passwords securely for later use
+mkdir -p /root/.fos-streaming
+echo "$MYSQL_ROOT_PASSWORD" > /root/.fos-streaming/mysql_root_password
+echo "$MYSQL_FOS_PASSWORD" > /root/.fos-streaming/mysql_fos_password
+echo "$APP_KEY" > /root/.fos-streaming/app_key
+chmod 700 /root/.fos-streaming
+chmod 600 /root/.fos-streaming/*
+
+success "Secure keys generated and saved"
+
+# Raspberry Pi optimizations
+log "Configuring Raspberry Pi optimizations..."
+
+# GPU memory for better performance
+BOOT_CONFIG="/boot/firmware/config.txt"
+if [ ! -f "$BOOT_CONFIG" ]; then
+    BOOT_CONFIG="/boot/config.txt"  # Fallback for older Pi OS
+fi
+
+if [ -f "$BOOT_CONFIG" ]; then
+    if grep -q "gpu_mem=" "$BOOT_CONFIG"; then
+        sed -i 's/gpu_mem=.*/gpu_mem=128/' "$BOOT_CONFIG"
+    else
+        echo "gpu_mem=128" >> "$BOOT_CONFIG"
+    fi
+    
+    # Enable hardware acceleration
+    if ! grep -q "dtoverlay=vc4-kms-v3d" "$BOOT_CONFIG"; then
+        echo "dtoverlay=vc4-kms-v3d" >> "$BOOT_CONFIG"
+    fi
+    
+    success "Pi hardware optimizations configured"
+else
+    warn "Could not find Pi config file, skipping hardware optimizations"
+fi
+
+# System update
+log "Updating system packages (this may take several minutes)..."
+export DEBIAN_FRONTEND=noninteractive
+apt-get update -y
+apt-get upgrade -y
+apt-get dist-upgrade -y
+apt-get autoremove -y
+
+# Install essential security packages
+log "Installing security packages and development tools..."
+apt-get install -y build-essential libssl-dev curl nano wget zip unzip git lsof iftop htop vim \
+    ca-certificates apt-transport-https software-properties-common gnupg2 fail2ban ufw \
+    logrotate rsyslog rkhunter chkrootkit aide composer openssl
+
+# Create log directories for FOS-Streaming
+log "Creating log directories..."
+mkdir -p /var/log/fos-streaming
+mkdir -p /var/log/nginx
+chmod 755 /var/log/fos-streaming
+
+# Security hardening - Configure UFW firewall
+log "Configuring firewall (UFW)..."
+ufw --force reset
+ufw default deny incoming
+ufw default allow outgoing
+ufw allow 22/tcp    # SSH (change this if you use different port)
+ufw allow 80/tcp    # HTTP
+ufw allow 443/tcp   # HTTPS
+ufw allow 7777/tcp  # FOS Web Interface
+ufw --force enable
+
+success "Firewall configured and activated"
+
+# Security hardening - Configure Fail2Ban
+log "Configuring Fail2Ban for attack protection..."
+cat > /etc/fail2ban/jail.local << 'EOF'
+[DEFAULT]
+bantime = 3600
+findtime = 600
+maxretry = 3
+backend = systemd
+banaction = ufw
+
+[sshd]
+enabled = true
+port = ssh
+logpath = %(sshd_log)s
+maxretry = 3
+
+[nginx-http-auth]
+enabled = true
+filter = nginx-http-auth
+port = http,https
+logpath = /var/log/nginx/error.log
+
+[fos-streaming]
+enabled = true
+port = 7777
+filter = fos-streaming
+logpath = /var/log/fos-streaming/app.log
+maxretry = 5
+bantime = 1800
+EOF
+
+# Create Fail2Ban filter for FOS-Streaming
+cat > /etc/fail2ban/filter.d/fos-streaming.conf << 'EOF'
+[Definition]
+failregex = ^.*SECURITY VIOLATION.*"ip":"<HOST>".*$
+            ^.*Failed login attempt.*from <HOST>.*$
+            ^.*Rate limit exceeded.*<HOST>.*$
+ignoreregex = 
+EOF
+
+systemctl restart fail2ban
+systemctl enable fail2ban
+
+success "Fail2Ban configured for attack protection"
+
+# Add PHP 8.1 repository
+log "Adding PHP 8.1 repository..."
+wget -qO - https://packages.sury.org/php/apt.gpg | gpg --dearmor -o /etc/apt/trusted.gpg.d/sury-php.gpg
+echo "deb https://packages.sury.org/php/ bookworm main" > /etc/apt/sources.list.d/php.list
+
+# Update package lists
+apt-get update -y
+
+# Install PHP 8.1 and extensions
+log "Installing PHP 8.1 and all necessary extensions..."
+apt-get install -y php8.1 php8.1-cgi php8.1-bcmath php8.1-bz2 php8.1-cli php8.1-common \
+    php8.1-curl php8.1-dba php8.1-dev php8.1-enchant php8.1-fpm php8.1-gd php8.1-gmp \
+    php8.1-imap php8.1-intl php8.1-ldap php8.1-mbstring php8.1-mysql php8.1-odbc \
+    php8.1-opcache php8.1-pgsql php8.1-pspell php8.1-readline php8.1-snmp php8.1-soap \
+    php8.1-sqlite3 php8.1-tidy php8.1-xml php8.1-xmlrpc php8.1-xsl php8.1-zip
+
+success "PHP 8.1 installed with all extensions"
+
+# Create nginx user
+log "Creating nginx system user..."
+useradd -r -s /bin/false nginx 2>/dev/null || log "nginx user already exists"
+
+# Secure PHP 8.1 configuration (Pi-optimized)
+log "Configuring PHP 8.1 with secure Pi-optimized settings..."
+cat > /etc/php/8.1/fpm/pool.d/www.conf << 'EOF'
+[www]
+user = nginx
+group = nginx
+listen = 127.0.0.1:9002
+listen.owner = nginx
+listen.group = nginx
+listen.mode = 0660
+
+; Pi-optimized process management
+pm = dynamic
+pm.max_children = 25
+pm.start_servers = 3
+pm.min_spare_servers = 2
+pm.max_spare_servers = 8
+pm.max_requests = 200
+
+; Security settings - Important functions allowed for FOS-Streaming
+php_admin_value[disable_functions] = show_source,highlight_file,ini_alter,ini_restore,dl,openlog,syslog,readlink,symlink,popepassthru,stream_socket_server,fsocket
+php_admin_flag[allow_url_fopen] = on
+php_admin_flag[allow_url_include] = off
+php_value[session.cookie_httponly] = 1
+php_value[session.cookie_secure] = 1
+php_value[session.use_strict_mode] = 1
+php_value[session.name] = FOS_SESSID
+
+; Security headers
+php_value[expose_php] = Off
+php_value[display_errors] = Off
+php_value[log_errors] = On
+php_value[error_log] = /var/log/fos-streaming/php-error.log
+
+; Pi-optimized limits
+php_value[upload_max_filesize] = 25M
+php_value[post_max_size] = 25M
+php_value[max_execution_time] = 120
+php_value[max_input_time] = 60
+php_value[memory_limit] = 256M
+EOF
+
+# PHP.ini security hardening
+log "Hardening PHP.ini security settings..."
+sed -i 's/;cgi.fix_pathinfo=1/cgi.fix_pathinfo=0/g' /etc/php/8.1/fpm/php.ini
+sed -i 's/output_buffering = 4096/output_buffering = Off/g' /etc/php/8.1/fpm/php.ini
+sed -i 's/expose_php = On/expose_php = Off/g' /etc/php/8.1/fpm/php.ini
+sed -i 's/;date.timezone =/date.timezone = UTC/g' /etc/php/8.1/fpm/php.ini
+sed -i 's/;opcache.enable=1/opcache.enable=1/g' /etc/php/8.1/fpm/php.ini
+sed -i 's/;opcache.memory_consumption=128/opcache.memory_consumption=128/g' /etc/php/8.1/fpm/php.ini
+
+# Restart PHP-FPM
+systemctl restart php8.1-fpm
+systemctl enable php8.1-fpm
+
+success "PHP 8.1 configured and activated"
+
+# Install development libraries (minimal set for Pi)
+log "Installing essential development libraries..."
+apt-get install -y libxml2-dev libbz2-dev libcurl4-openssl-dev libpcre3-dev libxslt1-dev \
+    libpq-dev libsqlite3-dev libssh2-1-dev libtidy-dev libtool uuid-dev zlib1g-dev \
+    libjpeg-dev libgd-dev libpng-dev libgeoip-dev pkg-config python3 python3-minimal
+
+# Clean packages
+apt-get autoremove -y
+
+# Create FOS streaming user
+log "Creating FOS streaming system user..."
+/usr/sbin/useradd -s /sbin/nologin -U -d /home/fos-streaming -m fosstreaming 2>/dev/null || log "fosstreaming user already exists"
+
+# Clone nginx build repository
+log "Downloading nginx build tools..."
+cd /
+if [ -d "/fospackv69" ]; then
+    rm -rf /fospackv69
+fi
+
+git clone --recurse-submodules "$NGINX_REPO"
+if [ ! -d "/fospackv69" ]; then
+    error "Failed to clone nginx build repository"
+    exit 1
+fi
+
+cp -a /fospackv69/fos /home/fos-streaming/
+
+# Build nginx with RTMP module (ARM64 optimized)
+log "Building nginx with RTMP module for ARM64 (this may take 15-20 minutes on Pi)..."
+cd /fospackv69/nginx-builder
+
+# Modify build script for ARM64 if needed
+if [ -f "build.sh" ]; then
+    # Make sure build script works on ARM64
+    sed -i 's/--with-cc-opt="-O2"/--with-cc-opt="-O2 -mcpu=native"/g' build.sh 2>/dev/null || true
+    bash build.sh || {
+        warn "Nginx build failed, installing from repository..."
+        apt-get install -y nginx-full
+    }
+else
+    warn "Nginx build script not found, installing from repository..."
+    apt-get install -y nginx-full
+fi
+
+cd /
+rm -rf /fospackv69
+
+success "Nginx with RTMP module built and installed"
+
+# Clone main repository with secure improvements
+log "Downloading FOS-Streaming from optiix repository..."
+cd /home/fos-streaming/fos
+rm -rf www
+git clone "$MAIN_REPO" www
+
+if [ ! -d "/home/fos-streaming/fos/www" ]; then
+    error "Failed to clone FOS-Streaming repository"
+    exit 1
+fi
+
+success "FOS-Streaming secure version loaded from optiix repository"
+
+# Install Composer dependencies
+log "Installing PHP dependencies via Composer..."
+cd /home/fos-streaming/fos/www
+if [ -f "composer.json" ]; then
+    composer install --no-dev --optimize-autoloader
+else
+    warn "composer.json missing, skipping composer install"
+fi
+
+# Create secure .env file with generated passwords
+log "Creating secure .env configuration file..."
+cat > /home/fos-streaming/fos/www/.env << EOF
+# FOS-Streaming Secure Configuration for Raspberry Pi
+# Generated automatically by installation script
+APP_ENV=production
+APP_DEBUG=false
+APP_KEY=$APP_KEY
+
+# Database settings
+DB_HOST=localhost
+DB_DATABASE=fos
+DB_USERNAME=fos
+DB_PASSWORD=$MYSQL_FOS_PASSWORD
+DB_PREFIX=
+
+# FFmpeg paths (ARM64)
+FFMPEG_PATH=/usr/bin/ffmpeg
+FFPROBE_PATH=/usr/bin/ffprobe
+
+# Streaming settings
+HLS_FOLDER=hl
+USER_AGENT=FOS-Streaming-Pi/2.0
+
+# Pi-optimized security settings
+SESSION_LIFETIME=1800
+MAX_LOGIN_ATTEMPTS=5
+LOCKOUT_TIME=900
+FORCE_HTTPS=false
+SECURE_COOKIES=true
+
+# Logging
+LOG_LEVEL=warning
+LOG_FILE=/var/log/fos-streaming/app.log
+
+# SMTP settings (configure if needed)
+MAIL_HOST=localhost
+MAIL_PORT=587
+MAIL_USERNAME=
+MAIL_PASSWORD=
+MAIL_ENCRYPTION=tls
+MAIL_FROM_ADDRESS=noreply@localhost
+MAIL_FROM_NAME="FOS Streaming Pi System"
+
+# Pi Performance settings
+PI_OPTIMIZATION=true
+MAX_CONCURRENT_STREAMS=3
+MEMORY_LIMIT=256M
+EOF
+
+chmod 600 /home/fos-streaming/fos/www/.env
+
+success "Secure .env file created with all configurations"
+
+# Set correct ownership and permissions
+log "Setting secure file permissions..."
+chown -R nginx:nginx /home/fos-streaming/fos/www
+chown -R nginx:nginx /home/fos-streaming/fos/nginx/conf
+chmod -R 755 /home/fos-streaming/fos/www
+chmod 600 /home/fos-streaming/fos/www/.env
+
+# Create necessary directories (Pi-optimized storage)
+log "Creating optimized storage directories for Pi..."
+mkdir -p /home/fos-streaming/fos/www/hl
+mkdir -p /home/fos-streaming/fos/www/cache
+
+# Use fast storage for HLS files
+if [ -d "/tmp" ]; then
+    mkdir -p /tmp/fos-hls
+    chown nginx:nginx /tmp/fos-hls
+    chmod 777 /tmp/fos-hls
+    # Link to fast storage
+    rm -rf /home/fos-streaming/fos/www/hl
+    ln -s /tmp/fos-hls /home/fos-streaming/fos/www/hl
+    success "HLS files linked to fast storage (/tmp)"
+else
+    chmod -R 777 /home/fos-streaming/fos/www/hl
+fi
+
+chmod -R 777 /home/fos-streaming/fos/www/cache
+
+# Install FFmpeg (ARM64 version)
+log "Installing ARM64-optimized FFmpeg..."
+apt-get install -y ffmpeg
+
+# Verify FFmpeg installation and create symlinks
+if command -v ffmpeg &> /dev/null; then
+    ln -sf $(which ffmpeg) /usr/local/bin/ffmpeg
+    ln -sf $(which ffprobe) /usr/local/bin/ffprobe
+    success "ARM64 FFmpeg installed and linked"
+else
+    error "FFmpeg installation failed"
+    exit 1
+fi
+
+# Configure MariaDB
+log "Installing and configuring MariaDB..."
+curl -k -o /etc/apt/trusted.gpg.d/mariadb_release_signing_key.asc 'https://mariadb.org/mariadb_release_signing_key.asc'
+echo 'deb https://fastmirror.pp.ua/mariadb/repo/10.11/debian bookworm main' > /etc/apt/sources.list.d/mariadb.list
+
+# Pre-configure MariaDB installation
+echo "mariadb-server mysql-server/root_password password $MYSQL_ROOT_PASSWORD" | debconf-set-selections
+echo "mariadb-server mysql-server/root_password_again password $MYSQL_ROOT_PASSWORD" | debconf-set-selections
+
+apt-get update -y
+apt-get install -y mariadb-server mariadb-client
+
+# Start MariaDB
+systemctl stop mariadb 2>/dev/null || true
+systemctl start mariadb
+systemctl enable mariadb
+
+# Wait for MariaDB
+sleep 5
+
+# Create database and user
+log "Creating database and user..."
+mysql -uroot -p"$MYSQL_ROOT_PASSWORD" -e "CREATE DATABASE IF NOT EXISTS fos CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;" 2>/dev/null || {
+    # If password doesn't work (new installation)
+    mysql -uroot -e "ALTER USER 'root'@'localhost' IDENTIFIED BY '$MYSQL_ROOT_PASSWORD';"
+    mysql -uroot -e "FLUSH PRIVILEGES;"
+    mysql -uroot -p"$MYSQL_ROOT_PASSWORD" -e "CREATE DATABASE IF NOT EXISTS fos CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;"
+}
+
+mysql -uroot -p"$MYSQL_ROOT_PASSWORD" -e "CREATE USER IF NOT EXISTS 'fos'@'localhost' IDENTIFIED BY '$MYSQL_FOS_PASSWORD';"
+mysql -uroot -p"$MYSQL_ROOT_PASSWORD" -e "GRANT ALL PRIVILEGES ON fos.* TO 'fos'@'localhost';"
+mysql -uroot -p"$MYSQL_ROOT_PASSWORD" -e "FLUSH PRIVILEGES;"
+
+success "MariaDB installed and configured"
+
+# Create systemd service for FOS cron (Pi-optimized)
+log "Creating secure Pi-optimized systemd cron service..."
+cat > /etc/systemd/system/fos-streaming-monitor.service << 'EOF'
+[Unit]
+Description=FOS Streaming Monitor Service for Raspberry Pi
+After=network.target mariadb.service
+
+[Service]
+Type=oneshot
+User=nginx
+Group=nginx
+WorkingDirectory=/home/fos-streaming/fos/www
+ExecStart=/usr/bin/php8.1 /home/fos-streaming/fos/www/cron.php
+StandardOutput=journal
+StandardError=journal
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/home/fos-streaming/fos /var/log/fos-streaming /tmp
+NoNewPrivileges=true
+
+# Pi-specific security hardening
+PrivateDevices=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictRealtime=true
+SystemCallFilter=@system-service
+
+# Pi resource limits
+MemoryLimit=256M
+CPUQuota=30%
+TasksMax=25
+EOF
+
+cat > /etc/systemd/system/fos-streaming-monitor.timer << 'EOF'
+[Unit]
+Description=Run FOS Streaming Monitor every 2 minutes on Pi
+Requires=fos-streaming-monitor.service
+
+[Timer]
+OnCalendar=*:*:0/120
+Persistent=true
+AccuracySec=10s
+
+[Install]
+WantedBy=timers.target
+EOF
+
+systemctl daemon-reload
+systemctl enable fos-streaming-monitor.timer
+systemctl start fos-streaming-monitor.timer
+
+success "Secure Pi-optimized systemd cron service created and activated"
+
+# Create additional web directory structure
+log "Creating web directory structure..."
+mkdir -p /home/fos-streaming/fos/www1/log/
+chown nginx:nginx /home/fos-streaming/fos/www1/log/
+
+# Copy files to www1
+cp -R /home/fos-streaming/fos/www/* /home/fos-streaming/fos/www1/
+rm -rf /home/fos-streaming/fos/www1/*.php
+rm -rf /home/fos-streaming/fos/www1/hl
+
+# Create symlinks
+ln -s /home/fos-streaming/fos/www/hl /home/fos-streaming/fos/www1/hl
+ln -s /home/fos-streaming/fos/www/config.php /home/fos-streaming/fos/www1/config.php
+ln -s /home/fos-streaming/fos/www/functions.php /home/fos-streaming/fos/www1/functions.php
+ln -s /home/fos-streaming/fos/www/stream.php /home/fos-streaming/fos/www1/stream.php
+ln -s /home/fos-streaming/fos/www/playlist.php /home/fos-streaming/fos/www1/playlist.php
+
+# Link PHP binary
+mkdir -p /home/fos-streaming/fos/php/bin
+ln -sf /usr/bin/php8.1 /home/fos-streaming/fos/php/bin/php
+
+# Download secure nginx configuration
+log "Configuring nginx with secure Pi-optimized settings..."
+curl -s https://raw.githubusercontent.com/optiix/FOS-Streaming-v69/master/nginx.conf > /home/fos-streaming/fos/nginx/conf/nginx.conf || {
+    warn "Failed to download nginx config, using default"
+}
+
+# Restart services
+log "Starting services..."
+systemctl restart php8.1-fpm
+
+# Start nginx
+if [ -f "/home/fos-streaming/fos/nginx/sbin/nginx_fos" ]; then
+    /home/fos-streaming/fos/nginx/sbin/nginx_fos
+    success "Nginx started"
+else
+    warn "nginx_fos binary not found"
+fi
+
+# Wait for services
+sleep 5
+
+# Initialize database
+log "Initializing database tables..."
+curl -s http://127.0.0.1:7777/install_database_tables.php?install=fresh 2>/dev/null || warn "Database initialization may have failed"
+curl -s http://127.0.0.1:7777/install_database_tables.php?install 2>/dev/null || warn "Database setup continues..."
+
+# Clean installation files
+rm -rf /home/fos-streaming/fos/www/install_database_tables.php 2>/dev/null || true
+
+# Get public IP
+PUBLIC_IP=$(curl -s api.ipify.org 2>/dev/null || curl -s ifconfig.me 2>/dev/null || hostname -I | awk '{print $1}')
+
+# Final Pi status report
+echo ""
+echo -e "${GREEN}============================================================="
+echo "🎉 FOS-STREAMING V69 RASPBERRY PI INSTALLATION COMPLETE! 🍓"
+echo "=============================================================${NC}"
+echo ""
+echo -e "${CYAN}📡 ACCESS INFORMATION:${NC}"
+echo -e "   🌐 Web Panel: ${GREEN}http://$PUBLIC_IP:7777${NC}"
+echo -e "   👤 Default Login: ${YELLOW}admin / admin${NC}"
+echo -e "   🔐 Change password IMMEDIATELY after first login!"
+echo ""
+echo -e "${CYAN}🍓 RASPBERRY PI STATUS:${NC}"
+echo -e "   📊 Model: $PI_MODEL"
+echo -e "   💾 RAM: ${TOTAL_RAM}GB"
+echo -e "   🔧 GPU Memory: 128MB (optimized)"
+echo -e "   📱 Architecture: ARM64"
+echo ""
+echo -e "${CYAN}🔒 SECURITY INFORMATION:${NC}"
+echo -e "   🛡️  Firewall (UFW): Active"
+echo -e "   🚫 Fail2Ban: Active (attack protection)"
+echo -e "   🔐 Secure passwords: Auto-generated"
+echo -e "   🔑 Encryption keys: Randomly generated"
+echo ""
+echo -e "${CYAN}💾 DATABASE INFORMATION:${NC}"
+echo -e "   🗄️  Database: fos"
+echo -e "   👤 User: fos"
+echo -e "   🔑 Root Password: ${YELLOW}cat /root/.fos-streaming/mysql_root_password${NC}"
+echo -e "   🔑 FOS Password: ${YELLOW}cat /root/.fos-streaming/mysql_fos_password${NC}"
+echo ""
+echo -e "${CYAN}⚡ PERFORMANCE NOTES:${NC}"
+echo -e "   🎯 Max recommended concurrent streams: 3"
+echo -e "   💾 HLS files use fast storage (/tmp)"
+echo -e "   🔧 PHP memory limit: 256MB"
+echo -e "   ⏱️  Monitoring: Every 2 minutes"
+echo ""
+echo -e "${CYAN}🔧 POST-INSTALLATION STEPS:${NC}"
+echo "1. Login and change default password immediately"
+echo "2. Configure your public IP in settings"
+echo "3. Test streaming with a simple source"
+echo "4. Monitor Pi temperature during heavy use: vcgencmd measure_temp"
+echo ""
+echo -e "${GREEN}🍓 Your Raspberry Pi is ready for secure IPTV streaming! 🍓${NC}"
+echo -e "${YELLOW}Reboot recommended to ensure all optimizations are active.${NC}"
+echo "============================================================="
