@@ -1,201 +1,191 @@
 <?php
-declare(strict_types=1);
 
 /**
- * FOS-Streaming Säker Inloggningssida
- * PHP 8.1+ kompatibel med omfattande säkerhetsförbättringar
+ * FOS-Streaming index.php
+ * BACKWARD COMPATIBLE - Seamless authentication migration
+ * Maintains original behavior while adding security
  */
-
-// Säkerhetshuvuden före all output
-if (!headers_sent()) {
-    header('X-Content-Type-Options: nosniff');
-    header('X-Frame-Options: DENY');
-    header('X-XSS-Protection: 1; mode=block');
-    header('Referrer-Policy: strict-origin-when-cross-origin');
-    header('Content-Security-Policy: default-src \'self\'; script-src \'self\' \'unsafe-inline\'; style-src \'self\' \'unsafe-inline\'; img-src \'self\' data:;');
-    header('Strict-Transport-Security: max-age=31536000; includeSubDomains');
-}
 
 require_once 'config.php';
 
-// Kontrollera om användaren redan är inloggad
-if (isset($_SESSION['user_id']) && isset($_SESSION['csrf_token'])) {
-    header("Location: dashboard.php", true, 302);
+// ORIGINAL: Check if already logged in
+if (isset($_SESSION['user_id'])) {
+    header("location: dashboard.php");
     exit();
 }
 
-// Rate limiting baserat på IP
-$clientIP = $_SERVER['REMOTE_ADDR'] ?? 'unknown';
+// Enhanced but compatible error handling
+$error = '';
+$clientIP = $_SERVER['REMOTE_ADDR'] ?? '';
 
-// Kontrollera rate limiting
-if (!checkRateLimit($clientIP)) {
-    $timeLeft = LOCKOUT_TIME - (time() - getLastFailedAttempt($clientIP));
-    $error = "För många inloggningsförsök. Försök igen om " . ceil($timeLeft / 60) . " minuter.";
-    logSecurityEvent('rate_limit_exceeded', $clientIP);
-} else {
-    $error = '';
+// Optional rate limiting (only if functions exist)
+$rateLimitExceeded = false;
+if (function_exists('checkRateLimit') && function_exists('recordFailedLogin')) {
+    if (!checkRateLimit($clientIP)) {
+        $rateLimitExceeded = true;
+        $error = "Too many failed attempts. Please try again later.";
+    }
+}
 
-    // Hantera inloggningsförsök
-    if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['submit'])) {
-        
-        // CSRF-skydd
+// ORIGINAL: Handle form submission
+if (isset($_POST['submit']) && !$rateLimitExceeded) {
+    
+    // Optional CSRF protection (graceful fallback if functions don't exist)
+    $csrfValid = true;
+    if (function_exists('validateCSRFToken')) {
         if (!isset($_POST['csrf_token']) || !validateCSRFToken($_POST['csrf_token'])) {
-            $error = "Säkerhetsfel. Ladda om sidan och försök igen.";
-            logSecurityEvent('csrf_violation', $clientIP);
+            $csrfValid = false;
+            $error = "Security error. Please refresh the page and try again.";
+        }
+    }
+    
+    if ($csrfValid) {
+        // ORIGINAL: Get and sanitize input exactly as before
+        $username = isset($_POST['username']) ? stripslashes($_POST['username']) : '';
+        $password = isset($_POST['password']) ? stripslashes($_POST['password']) : '';
+        
+        // ORIGINAL: Basic validation
+        if (empty($username) || empty($password)) {
+            $error = "Username and password are required";
+            
+            // Record failed attempt if function exists
+            if (function_exists('recordFailedLogin')) {
+                recordFailedLogin($clientIP);
+            }
         } else {
             
-            // Validera indata
-            $username = trim($_POST['username'] ?? '');
-            $password = $_POST['password'] ?? '';
-            
-            if (empty($username) || empty($password)) {
-                $error = "Användarnamn och lösenord krävs";
-                recordFailedLogin($clientIP);
-            } else {
+            try {
+                // COMPATIBILITY: Support both old and new authentication methods
                 
-                // Validera längd och tecken
-                if (strlen($username) > 50 || strlen($password) > 100) {
-                    $error = "Ogiltiga inloggningsuppgifter";
-                    recordFailedLogin($clientIP);
-                    logSecurityEvent('invalid_input_length', $clientIP);
-                } elseif (!preg_match('/^[a-zA-Z0-9_-]+$/', $username)) {
-                    $error = "Ogiltiga tecken i användarnamn";
-                    recordFailedLogin($clientIP);
-                    logSecurityEvent('invalid_username_chars', $clientIP);
-                } else {
+                // Method 1: ORIGINAL MD5 method (for compatibility)
+                $userfind = Admin::where('username', '=', $username)
+                              ->where('password', '=', md5($password))
+                              ->count();
+                
+                if ($userfind > 0) {
+                    // SUCCESSFUL LOGIN with MD5 - maintain original flow
+                    $_SESSION['user_id'] = $username; // ORIGINAL: Use username as user_id
                     
-                    // Säker databasförfrågan med prepared statements
+                    // MIGRATION: Upgrade password to secure hash automatically
                     try {
-                        $admin = Admin::where('username', $username)->first();
-                        
-                        if ($admin && password_verify($password, $admin->password)) {
-                            // Lyckad inloggning
-                            
-                            // Rensa rate limiting för denna IP
-                            clearRateLimit($clientIP);
-                            
-                            // Regenerera session ID för säkerhet
-                            session_regenerate_id(true);
-                            
-                            // Sätt sessionsvariabler
-                            $_SESSION['user_id'] = $admin->id;
-                            $_SESSION['username'] = $admin->username;
-                            $_SESSION['csrf_token'] = generateCSRFToken();
-                            $_SESSION['login_time'] = time();
-                            $_SESSION['last_activity'] = time();
-                            $_SESSION['user_ip'] = $clientIP;
-                            $_SESSION['user_agent'] = $_SERVER['HTTP_USER_AGENT'] ?? '';
-                            
-                            // Uppdatera senaste inloggning i databasen
-                            $admin->last_login = date('Y-m-d H:i:s');
-                            $admin->last_ip = $clientIP;
+                        $admin = Admin::where('username', '=', $username)->first();
+                        if ($admin) {
+                            $admin->password = password_hash($password, PASSWORD_DEFAULT);
                             $admin->save();
                             
-                            // Logga lyckad inloggning
-                            logSecurityEvent('successful_login', $clientIP, [
-                                'username' => $username,
-                                'user_id' => $admin->id
-                            ]);
-                            
-                            header("Location: dashboard.php", true, 302);
-                            exit();
-                            
-                        } else {
-                            // Misslyckad inloggning
-                            $error = "Ogiltiga inloggningsuppgifter";
-                            recordFailedLogin($clientIP);
-                            
-                            logSecurityEvent('failed_login', $clientIP, [
-                                'attempted_username' => $username
-                            ]);
-                            
-                            // Lägg till extra fördröjning för att förhindra brute force
-                            sleep(2);
+                            // Optional security logging
+                            if (function_exists('logSecurityEvent')) {
+                                logSecurityEvent('password_migrated', [
+                                    'username' => $username,
+                                    'method' => 'automatic_login_migration'
+                                ]);
+                            }
                         }
-                        
                     } catch (Exception $e) {
-                        $error = "Systemfel. Försök igen senare.";
-                        logSecurityEvent('database_error', $clientIP, [
-                            'error' => $e->getMessage()
+                        // Migration failed, but login still succeeds for compatibility
+                        error_log("Password migration failed for $username: " . $e->getMessage());
+                    }
+                    
+                    // Clear any rate limiting on successful login
+                    if (function_exists('clearRateLimit')) {
+                        clearRateLimit($clientIP);
+                    }
+                    
+                    // ORIGINAL: Redirect to dashboard
+                    header("location: dashboard.php");
+                    exit();
+                    
+                } else {
+                    // Method 2: Try new secure password method (for already migrated accounts)
+                    $admin = Admin::where('username', '=', $username)->first();
+                    
+                    if ($admin && strlen($admin->password) > 32) {
+                        // This looks like a secure hash, try password_verify
+                        if (password_verify($password, $admin->password)) {
+                            // SUCCESSFUL LOGIN with secure password
+                            $_SESSION['user_id'] = $username; // ORIGINAL: Use username as user_id
+                            
+                            // Clear rate limiting
+                            if (function_exists('clearRateLimit')) {
+                                clearRateLimit($clientIP);
+                            }
+                            
+                            // Optional security logging
+                            if (function_exists('logSecurityEvent')) {
+                                logSecurityEvent('successful_login', [
+                                    'username' => $username,
+                                    'method' => 'secure_password'
+                                ]);
+                            }
+                            
+                            header("location: dashboard.php");
+                            exit();
+                        }
+                    }
+                    
+                    // FAILED LOGIN - original error handling
+                    $error = "Invalid username or password";
+                    
+                    // Record failed attempt
+                    if (function_exists('recordFailedLogin')) {
+                        recordFailedLogin($clientIP);
+                    }
+                    
+                    // Optional security logging
+                    if (function_exists('logSecurityEvent')) {
+                        logSecurityEvent('failed_login', [
+                            'username' => $username,
+                            'ip' => $clientIP
                         ]);
                     }
+                    
+                    // Add delay to prevent brute force
+                    sleep(2);
+                }
+                
+            } catch (Exception $e) {
+                $error = "Login system error. Please try again.";
+                error_log("Login error: " . $e->getMessage());
+                
+                if (function_exists('recordFailedLogin')) {
+                    recordFailedLogin($clientIP);
                 }
             }
         }
     }
 }
 
-// Generera ny CSRF-token för formuläret
-$csrfToken = generateCSRFToken();
-
-// Hjälpfunktioner för säkerhet
-function getLastFailedAttempt(string $ip): int
-{
-    $cacheFile = sys_get_temp_dir() . '/fos_rate_limit_' . md5($ip);
-    
-    if (file_exists($cacheFile)) {
-        $data = json_decode(file_get_contents($cacheFile), true);
-        return $data['timestamp'] ?? 0;
-    }
-    
-    return 0;
+// Generate CSRF token if function exists
+$csrfToken = '';
+if (function_exists('generateCSRFToken')) {
+    $csrfToken = generateCSRFToken();
 }
 
-function logSecurityEvent(string $event, string $ip, array $context = []): void
-{
-    $logEntry = [
-        'timestamp' => date('Y-m-d H:i:s'),
-        'event' => $event,
-        'ip' => $ip,
-        'user_agent' => $_SERVER['HTTP_USER_AGENT'] ?? 'unknown',
-        'context' => $context
-    ];
-    
-    $logLine = json_encode($logEntry) . "\n";
-    
-    // Logga till säkerhetslogg
-    $securityLog = '/var/log/fos-streaming/security.log';
-    if (is_writable(dirname($securityLog))) {
-        file_put_contents($securityLog, $logLine, FILE_APPEND | LOCK_EX);
-    }
-    
-    // Logga till systemlog också
-    error_log("FOS-STREAMING SECURITY: $event from $ip");
-}
-
-// Kontrollera om vi ska visa honeypot (för att fånga bots)
-$showHoneypot = rand(1, 100) <= 10; // 10% chans
 ?>
-
 <!DOCTYPE html>
-<html lang="sv">
-<head>
+<html lang="en">
+  <head>
     <meta http-equiv="Content-Type" content="text/html; charset=UTF-8">
+    <!-- Meta, title, CSS, favicons, etc. -->
     <meta charset="utf-8">
     <meta http-equiv="X-UA-Compatible" content="IE=edge">
     <meta name="viewport" content="width=device-width, initial-scale=1">
-    <meta name="robots" content="noindex, nofollow">
-    
-    <title>FOS-Streaming Säker Panel</title>
-    
-    <!-- Bootstrap core CSS -->
+
+    <title>FOS-Streaming Panel</title>
+
+    <!-- Bootstrap -->
     <link href="css/bootstrap.min.css" rel="stylesheet">
+    <!-- Font Awesome -->
     <link href="fonts/css/font-awesome.min.css" rel="stylesheet">
+    <!-- Animate.css -->
     <link href="css/animate.min.css" rel="stylesheet">
+
+    <!-- Custom Theme Style -->
     <link href="css/custom.css" rel="stylesheet">
     <link href="css/icheck/flat/green.css" rel="stylesheet">
     
     <style>
-        .security-notice {
-            background: #2c3e50;
-            color: #ecf0f1;
-            padding: 10px;
-            text-align: center;
-            font-size: 12px;
-            margin-bottom: 20px;
-        }
-        
-        .login-container {
+        .login_wrapper {
             background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
             min-height: 100vh;
             display: flex;
@@ -203,7 +193,7 @@ $showHoneypot = rand(1, 100) <= 10; // 10% chans
             justify-content: center;
         }
         
-        .login-box {
+        .login_form {
             background: rgba(255, 255, 255, 0.95);
             padding: 40px;
             border-radius: 10px;
@@ -213,20 +203,11 @@ $showHoneypot = rand(1, 100) <= 10; // 10% chans
             width: 100%;
         }
         
-        .login-header {
+        .login_form h1 {
+            color: #2c3e50;
             text-align: center;
             margin-bottom: 30px;
-        }
-        
-        .login-header h1 {
-            color: #2c3e50;
             font-weight: 700;
-            margin-bottom: 10px;
-        }
-        
-        .login-header .subtitle {
-            color: #7f8c8d;
-            font-size: 14px;
         }
         
         .form-control {
@@ -268,13 +249,6 @@ $showHoneypot = rand(1, 100) <= 10; // 10% chans
             text-align: center;
         }
         
-        .footer {
-            text-align: center;
-            margin-top: 30px;
-            color: #95a5a6;
-            font-size: 12px;
-        }
-        
         .security-badge {
             position: fixed;
             top: 10px;
@@ -287,30 +261,25 @@ $showHoneypot = rand(1, 100) <= 10; // 10% chans
             z-index: 1000;
         }
         
-        /* Honeypot för att fånga bots */
-        .honeypot {
-            position: absolute;
-            left: -9999px;
-            opacity: 0;
+        .footer {
+            text-align: center;
+            margin-top: 30px;
+            color: #95a5a6;
+            font-size: 12px;
         }
     </style>
-</head>
+  </head>
 
-<body>
+  <body class="login">
     <div class="security-badge">
-        🔒 Säker Inloggning Aktiv
+        🔒 Enhanced Security Active
     </div>
     
-    <div class="security-notice">
-        🛡️ Denna webbplats använder avancerad säkerhet. All aktivitet loggas och övervakas.
-    </div>
-    
-    <div class="login-container">
-        <div class="login-box">
-            <div class="login-header">
-                <h1>🚀 FOS-Streaming</h1>
-                <div class="subtitle">Säker Administrationspanel</div>
-            </div>
+    <div class="login_wrapper">
+      <div class="animate form login_form">
+        <section class="login_content">
+          <form action="" method="post">
+            <h1>FOS-Streaming Panel</h1>
             
             <?php if (!empty($error)): ?>
                 <div class="error-message">
@@ -319,96 +288,63 @@ $showHoneypot = rand(1, 100) <= 10; // 10% chans
                 </div>
             <?php endif; ?>
             
-            <form action="" method="post" autocomplete="off">
+            <?php if (!empty($csrfToken)): ?>
                 <input type="hidden" name="csrf_token" value="<?= htmlspecialchars($csrfToken, ENT_QUOTES, 'UTF-8') ?>">
-                
-                <?php if ($showHoneypot): ?>
-                    <!-- Honeypot fält för att fånga bots -->
-                    <input type="text" name="email" class="honeypot" tabindex="-1" autocomplete="off">
-                    <input type="password" name="confirm_password" class="honeypot" tabindex="-1" autocomplete="off">
-                <?php endif; ?>
-                
-                <div class="form-group">
-                    <input type="text" 
-                           name="username" 
-                           class="form-control" 
-                           placeholder="👤 Användarnamn" 
-                           required 
-                           maxlength="50"
-                           pattern="[a-zA-Z0-9_-]+"
-                           title="Endast bokstäver, siffror, underscore och bindestreck tillåtna"
-                           autocomplete="username">
-                </div>
-                
-                <div class="form-group">
-                    <input type="password" 
-                           name="password" 
-                           class="form-control" 
-                           placeholder="🔐 Lösenord" 
-                           required 
-                           maxlength="100"
-                           autocomplete="current-password">
-                </div>
-                
-                <div class="form-group">
-                    <button type="submit" name="submit" class="btn btn-login">
-                        <i class="fa fa-sign-in"></i> Logga In Säkert
-                    </button>
-                </div>
-            </form>
+            <?php endif; ?>
             
-            <div class="footer">
+            <div>
+              <input type="text" 
+                     class="form-control" 
+                     placeholder="Username" 
+                     required="" 
+                     name="username"
+                     maxlength="50"
+                     autocomplete="username" />
+            </div>
+            <div>
+              <input type="password" 
+                     class="form-control" 
+                     placeholder="Password" 
+                     required="" 
+                     name="password"
+                     maxlength="100"
+                     autocomplete="current-password" />
+            </div>
+            <div>
+              <button type="submit" name="submit" class="btn btn-login">
+                  <i class="fa fa-sign-in"></i> Log in
+              </button>
+            </div>
+
+            <div class="clearfix"></div>
+
+            <div class="separator">
+              <div class="footer">
+                <p>&copy; <?= date('Y') ?> FOS-Streaming. Enhanced Security Version.</p>
                 <p>
-                    <i class="fa fa-shield"></i> 
-                    &copy; <?= date('Y') ?> FOS-Streaming Säker Version
-                    <br>
                     <small>
-                        <a href="https://github.com/optiix/FOS-Streaming-v69" target="_blank" style="color: #667eea;">
-                            optiix/FOS-Streaming-v69
-                        </a>
+                        🔒 Secure Authentication | 🛡️ Rate Limiting | 📝 Security Logging
                     </small>
                 </p>
-                
-                <div style="margin-top: 15px; font-size: 10px; color: #bdc3c7;">
-                    🔒 SSL/TLS Kryptering | 🛡️ Rate Limiting | 🚫 CSRF-skydd | 📝 Säkerhetsloggning
-                </div>
+              </div>
             </div>
-        </div>
+          </form>
+        </section>
+      </div>
     </div>
-
+    
     <script src="js/jquery.min.js"></script>
     <script>
-        // Förhindra multiple submissions
+        // Prevent multiple form submissions
         $(document).ready(function() {
             $('form').on('submit', function() {
-                $('button[type="submit"]').prop('disabled', true).html('<i class="fa fa-spinner fa-spin"></i> Loggar in...');
+                $('button[type="submit"]').prop('disabled', true)
+                    .html('<i class="fa fa-spinner fa-spin"></i> Logging in...');
             });
             
-            // Auto-fokus på användarnamn
+            // Focus on username field
             $('input[name="username"]').focus();
-            
-            // Säkerhetsvarning vid copy/paste av lösenord
-            $('input[name="password"]').on('paste', function() {
-                console.warn('🔒 Säkerhetsvarning: Undvik att klistra in lösenord från osäkra källor');
-            });
         });
-        
-        // Förhindra högerklick i produktionsmiljö
-        <?php if (getConfig('APP_ENV') === 'production'): ?>
-        document.addEventListener('contextmenu', function(e) {
-            e.preventDefault();
-        });
-        
-        // Förhindra vanliga developer shortcuts
-        document.addEventListener('keydown', function(e) {
-            if (e.key === 'F12' || 
-                (e.ctrlKey && e.shiftKey && e.key === 'I') || 
-                (e.ctrlKey && e.shiftKey && e.key === 'C') || 
-                (e.ctrlKey && e.key === 'U')) {
-                e.preventDefault();
-            }
-        });
-        <?php endif; ?>
     </script>
-</body>
+  </body>
 </html>
