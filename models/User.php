@@ -1,14 +1,16 @@
 <?php
+declare(strict_types=1);
+
 class User extends FosStreaming {
 
     protected $table = 'users';
 
     public function categories()
     {
-        return $this->belongsToMany('Category');
+        return $this->belongsToMany(Category::class);
     }
     
-    public function getCategoryNamesAttribute()
+    public function getCategoryNamesAttribute(): string
     {
         $return = "";
         $prefix = '';
@@ -23,11 +25,11 @@ class User extends FosStreaming {
 
     public function activity()
     {
-        return $this->hasMany('Activity');
+        return $this->hasMany(Activity::class);
     }
 
     public function laststream()
     {
-        return $this->hasOne('Stream', 'id', 'last_stream');
+        return $this->hasOne(Stream::class, 'id', 'last_stream');
     }
 }
